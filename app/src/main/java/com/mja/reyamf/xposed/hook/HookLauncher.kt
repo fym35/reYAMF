@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.RemoteAction
 import android.content.ComponentName
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.graphics.drawable.Icon
 import android.os.UserHandle
 import android.view.View
@@ -41,16 +42,16 @@ import com.mja.reyamf.xposed.utils.registerReceiver
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.IXposedHookZygoteInit
 import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XC_MethodReplacement
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 import java.lang.reflect.Proxy
-
+import kotlin.apply
+import java.util.concurrent.CopyOnWriteArraySet
 
 class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
     companion object {
-        const val TAG = "reYAMF_HookLauncher"
+        const val TAG = "SuperYAMF_HookLauncher"
         const val ACTION_RECEIVE_LAUNCHER_CONFIG =
             "com.mja.reyamf.ACTION_RECEIVE_LAUNCHER_CONFIG"
 
@@ -69,8 +70,8 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         EzXHelperInit.initHandleLoadPackage(lpparam)
-        loadClassOrNull("com.android.launcher3.Launcher") ?: return
-        findMethod("com.android.launcher3.Launcher") {
+        loadClassOrNull("com.android.quickstep.RecentsActivity") ?: return
+        findMethod("com.android.quickstep.RecentsActivity") {
             name == "onCreate"
         }.hookAfter {
             if (!isRegistered) {
@@ -86,6 +87,7 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
                         TAG,
                         "receive config hookRecent=$hookRecent hookTaskbar=$hookTaskbar hookPopup=$hookPopup hookTranslucentTaskbar=$hookTransientTaskbar"
                     )
+
                     if (hookRecent) runCatching { hookRecent(lpparam) }.onFailure { e ->
                         log(TAG, "hook recent failed", e) }
                     if (hookTaskbar) runCatching { hookTaskbar(lpparam) }.onFailure { e ->
@@ -108,6 +110,9 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
 
     private fun hookRecent(lpparam: XC_LoadPackage.LoadPackageParam) {
         log(TAG, "hooking recent ${lpparam.packageName}")
+        if (lpparam.packageName != "com.android.launcher3")
+            log(TAG, "recent IS NOT hooking launcher3!")
+        //lpparam.classLoader = #?
         XposedBridge.hookAllMethods(
             XposedHelpers.findClass(
                 "com.android.quickstep.TaskOverlayFactory",
@@ -115,7 +120,9 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
             ), "getEnabledShortcuts", object : XC_MethodHook() {
                 @SuppressLint("UseCompatLoadingForDrawables")
                 override fun afterHookedMethod(param: MethodHookParam) {
+                    log(TAG, "got quickstep method hooked")
                     val taskView = param.args[0] as View
+
                     val shortcuts = param.result as MutableList<Any>
                     val itemInfo = XposedHelpers.getObjectField(shortcuts[0], "mItemInfo")
 
