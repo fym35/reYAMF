@@ -8,6 +8,7 @@ import android.app.RemoteAction
 import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.ComponentInfo
 import android.graphics.drawable.Icon
 import android.os.UserHandle
 import android.view.View
@@ -112,7 +113,7 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
         log(TAG, "hooking recent ${lpparam.packageName}")
         if (lpparam.packageName != "com.android.launcher3")
             log(TAG, "recent IS NOT hooking launcher3!")
-        //lpparam.classLoader = #?
+
         XposedBridge.hookAllMethods(
             XposedHelpers.findClass(
                 "com.android.quickstep.TaskOverlayFactory",
@@ -120,7 +121,6 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
             ), "getEnabledShortcuts", object : XC_MethodHook() {
                 @SuppressLint("UseCompatLoadingForDrawables")
                 override fun afterHookedMethod(param: MethodHookParam) {
-                    log(TAG, "got quickstep method hooked")
                     val taskView = param.args[0] as View
 
                     val shortcuts = param.result as MutableList<Any>
@@ -151,15 +151,23 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
                         setPackage("android")
                     }
 
+                    /* I have no idea why topComponent is sometimes a String and sometimes a ComponentName,
+                       but every attempt to get a ComponentName in onFailure has been a failure, and, well, this works
+                          FIXME                                                   - konggdev              */
                     runCatching {
                         val itemInfoTmp =
                             itemInfo.javaClass.newInstance(args(itemInfo), argTypes(itemInfo.javaClass))
                         val topComponent = XposedHelpers.callMethod(itemInfoTmp, "getTargetComponent") as ComponentName
+                        val packageName = topComponent.packageName;
+                        intent.putExtra(YAMFManager.EXTRA_PACKAGE_NAME, packageName)
                         intent.putExtra(YAMFManager.EXTRA_COMPONENT_NAME, topComponent)
                     }.onFailure {
                         val topComponent = extractComponentInfo(itemInfo.toString()).toString()
+                        val packageName = topComponent.substringAfter("{").substringBefore("/")
+                        intent.putExtra(YAMFManager.EXTRA_PACKAGE_NAME, packageName)
                         intent.putExtra(YAMFManager.EXTRA_COMPONENT_NAME, topComponent)
                     }
+
                     intent.putExtra(YAMFManager.EXTRA_TASK_ID, taskId)
                     intent.putExtra(YAMFManager.EXTRA_USER_ID, userId)
                     intent.putExtra(YAMFManager.EXTRA_SOURCE, YAMFManager.SOURCE_RECENT)
@@ -199,7 +207,6 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
     }
 
     private fun hookTaskbar(lpparam: XC_LoadPackage.LoadPackageParam) {
-        log(TAG, "hooking taskbar ${lpparam.packageName}")
         loadClass("com.android.launcher3.taskbar.TaskbarActivityContext").apply {
             findMethodOrNull { name == "startItemInfoActivity" }
                 ?.hookReplace {
@@ -207,6 +214,7 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
                     val intent = Intent(YAMFManager.ACTION_OPEN_IN_YAMF).apply {
                         setPackage("android")
                         putExtra(YAMFManager.EXTRA_COMPONENT_NAME, infoIntent.component)
+                        putExtra(YAMFManager.EXTRA_PACKAGE_NAME, infoIntent.component?.packageName)
                         putExtra(YAMFManager.EXTRA_SOURCE, YAMFManager.SOURCE_TASKBAR)
                     }
                     AndroidAppHelper.currentApplication().sendBroadcast(intent)
@@ -221,6 +229,7 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
                         val intent = Intent(YAMFManager.ACTION_OPEN_IN_YAMF).apply {
                             setPackage("android")
                             putExtra(YAMFManager.EXTRA_COMPONENT_NAME, infoIntent.component)
+                            putExtra(YAMFManager.EXTRA_PACKAGE_NAME, infoIntent.component?.packageName)
                             putExtra(YAMFManager.EXTRA_SOURCE, YAMFManager.SOURCE_TASKBAR)
                         }
                         AndroidAppHelper.currentApplication().sendBroadcast(intent)
@@ -277,7 +286,6 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
     }
 
     private fun hookPopup(lpparam: XC_LoadPackage.LoadPackageParam) {
-        log(TAG, "hooking popup ${lpparam.packageName}")
 //        loadClass("com.android.launcher3.Launcher")
 //            .findMethod { name == "getSupportedShortcuts" }
 //            .hookAfter {
@@ -316,7 +324,6 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
     }
 
     private fun hookTransientTaskbar(lpparam: XC_LoadPackage.LoadPackageParam) {
-        log(TAG, "hook transientTaskbar ${lpparam.packageName}")
         loadClass("com.android.launcher3.util.DisplayController")
             .findMethod { name == "isTransientTaskbar" }
             .hookReturnConstant(true)

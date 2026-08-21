@@ -46,6 +46,8 @@ import com.mja.reyamf.xposed.services.YAMFManager
 import de.robv.android.xposed.XposedBridge
 import com.mja.reyamf.common.model.Config as YAMFConfig
 
+private const val TAG = "reYAMF_Utils"
+
 fun log(tag: String, message: String) {
     XposedBridge.log("[$tag] $message")
 }
