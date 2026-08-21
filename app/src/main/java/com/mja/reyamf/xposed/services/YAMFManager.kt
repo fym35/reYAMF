@@ -1,5 +1,6 @@
 package com.mja.reyamf.xposed.services
 
+import android.R
 import android.annotation.SuppressLint
 import android.app.AndroidAppHelper
 import android.content.BroadcastReceiver
@@ -35,17 +36,11 @@ import com.mja.reyamf.xposed.IOpenCountListener
 import com.mja.reyamf.xposed.IYAMFManager
 import com.mja.reyamf.xposed.hook.HookLauncher
 import com.mja.reyamf.xposed.ui.window.AppWindow
-import com.mja.reyamf.xposed.utils.Instances
+import com.mja.reyamf.xposed.utils.*
 import com.mja.reyamf.xposed.utils.Instances.systemContext
 import com.mja.reyamf.xposed.utils.Instances.systemUiContext
-import com.mja.reyamf.xposed.utils.componentName
-import com.mja.reyamf.xposed.utils.createContext
-import com.mja.reyamf.xposed.utils.getActivityInfoCompat
-import com.mja.reyamf.xposed.utils.getTopRootTask
-import com.mja.reyamf.xposed.utils.log
-import com.mja.reyamf.xposed.utils.registerReceiver
-import com.mja.reyamf.xposed.utils.startAuto
 import com.qauxv.ui.CommonContextWrapper
+import org.xmlpull.v1.XmlPullParserFactory
 import rikka.hidden.compat.ActivityManagerApis
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -61,6 +56,9 @@ object YAMFManager : IYAMFManager.Stub() {
     const val ACTION_OPEN_IN_YAMF = "com.mja.reyamf.ACTION_OPEN_IN_YAMF"
 
     const val EXTRA_COMPONENT_NAME = "componentName"
+
+    const val EXTRA_PACKAGE_NAME = "packageName"
+
     const val EXTRA_USER_ID = "userId"
     const val EXTRA_TASK_ID = "taskId"
     const val EXTRA_SOURCE = "source"
@@ -78,6 +76,9 @@ object YAMFManager : IYAMFManager.Stub() {
     lateinit var activityManagerService: Any
     private val listeners = mutableListOf<TopDisplayId>()
     var currentDisplayId = 0
+
+    private const val APPLOCK_PREFS_PATH = "/data_mirror/data_ce/null/0/eu.hxreborn.biometricapplock/shared_prefs/biometric_app_lock_prefs.xml"
+    private const val LOCKED_PACKAGES_KEY = "locked_packages"
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     fun systemReady() {
@@ -222,7 +223,13 @@ object YAMFManager : IYAMFManager.Stub() {
     override fun createWindowUserspace(appInfo: AppInfo?) {
         runMain {
             appInfo?.let {
-                createWindow(StartCmd(it.activityInfo.componentName, it.userId))
+                val locked = lockedByAppLock(it.activityInfo.componentName?.packageName ?: "", it.userId)
+                if(locked) {
+                    TipUtil.showToast("This app is locked")
+                    //TODO: Show own our authentication, then launch the window
+                } else {
+                    createWindow(StartCmd(it.activityInfo.componentName, it.userId))
+                }
             }
         }
     }
@@ -310,14 +317,55 @@ object YAMFManager : IYAMFManager.Stub() {
         }
     }
 
+    internal fun readAppLockLockedPackages(): Set<String> {
+        val raw = try {
+            val proc = ProcessBuilder("su", "-c", "cat $APPLOCK_PREFS_PATH")
+                .redirectErrorStream(true)
+                .start()
+            val xml = proc.inputStream.bufferedReader().readText()
+            if (proc.waitFor() != 0 || xml.isBlank()) null
+            else XmlPullParserFactory.newInstance().newPullParser().run {
+                setInput(xml.reader())
+                var result: String? = null
+                while (eventType != org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                    if (eventType == org.xmlpull.v1.XmlPullParser.START_TAG && name == "string" &&
+                        getAttributeValue(null, "name") == LOCKED_PACKAGES_KEY
+                    ) result = nextText()
+                    next()
+                }
+                result
+            }
+        } catch (t: Throwable) {
+            log(TAG, "readAppLockLockedPackages: threw $t")
+            null
+        } ?: run {
+            log(TAG, "readAppLockLockedPackages: raw is null, returning emptySet()")
+            return emptySet()
+        }
+
+        return raw.split("|")
+            .filter { it.isNotBlank() }
+            .mapTo(mutableSetOf()) { if (':' in it) it else "$it:0" }
+    }
+
+    internal fun lockedByAppLock(pkg: String, userId: Int): Boolean {
+        return "$pkg:$userId" in readAppLockLockedPackages()
+    }
     private val OpenInYAMFBroadcastReceiver: BroadcastReceiver.(Context, Intent) -> Unit =
         { _: Context, intent: Intent ->
             val taskId = intent.getIntExtra(EXTRA_TASK_ID, 0)
-            val componentName =
-                intent.getParcelableExtra(EXTRA_COMPONENT_NAME, ComponentName::class.java)
+            val componentName = intent.getParcelableExtra(EXTRA_COMPONENT_NAME, ComponentName::class.java)
+            val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME)
             val userId = intent.getIntExtra(EXTRA_USER_ID, 0)
             val source = intent.getIntExtra(EXTRA_SOURCE, SOURCE_UNSPECIFIED)
-            createWindow(StartCmd(componentName, userId, taskId))
+            val locked = lockedByAppLock(packageName ?: "", userId)
+
+            if(locked) {
+                //Interrupt
+                TipUtil.showToast("This app is locked")
+            } else {
+                createWindow(StartCmd(componentName, userId, taskId))
+            }
 
             // TODO: better way to close recents
             if (source == SOURCE_RECENT && config.recentBackHome) {
