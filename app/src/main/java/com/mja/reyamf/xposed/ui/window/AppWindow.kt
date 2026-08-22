@@ -535,15 +535,29 @@ class AppWindow(
         }
     }
 
+    @Volatile
+    private var isDestroyed = false
+
     private fun onDestroy() {
-        context.unregisterReceiver(broadcastReceiver)
-        Instances.iWindowManager.removeRotationWatcher(rotationWatcher)
-        Instances.activityTaskManager.unregisterTaskStackListener(taskStackListener)
-        YAMFManager.removeWindow(displayId)
-        virtualDisplay.release()
-        Instances.windowManager.removeView(binding.root)
-        Instances.windowManager.removeView(bindingLeftBackGesture.root)
-        Instances.windowManager.removeView(bindingRightBackGesture.root)
+        if (isDestroyed) return
+        isDestroyed = true
+
+        runCatching { context.unregisterReceiver(broadcastReceiver) }
+            .onFailure { Log.w(TAG, "onDestroy: receiver unregister failed", it) }
+        runCatching { Instances.iWindowManager.removeRotationWatcher(rotationWatcher) }
+            .onFailure { Log.w(TAG, "onDestroy: rotation watcher removal failed", it) }
+        runCatching { Instances.activityTaskManager.unregisterTaskStackListener(taskStackListener) }
+            .onFailure { Log.w(TAG, "onDestroy: task stack listener unregister failed", it) }
+        runCatching { YAMFManager.removeWindow(displayId) }
+            .onFailure { Log.w(TAG, "onDestroy: removeWindow failed", it) }
+        runCatching { virtualDisplay.release() }
+            .onFailure { Log.w(TAG, "onDestroy: virtualDisplay release failed", it) }
+        runCatching { Instances.windowManager.removeView(binding.root) }
+            .onFailure { Log.w(TAG, "onDestroy: removeView(root) failed", it) }
+        runCatching { Instances.windowManager.removeView(bindingLeftBackGesture.root) }
+            .onFailure { Log.w(TAG, "onDestroy: removeView(left gesture) failed", it) }
+        runCatching { Instances.windowManager.removeView(bindingRightBackGesture.root) }
+            .onFailure { Log.w(TAG, "onDestroy: removeView(right gesture) failed", it) }
     }
 
     private fun getTopRootTask(): ActivityTaskManager.RootTaskInfo? {
