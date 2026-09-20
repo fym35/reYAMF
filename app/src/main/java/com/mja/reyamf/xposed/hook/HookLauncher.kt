@@ -52,7 +52,7 @@ import java.util.concurrent.CopyOnWriteArraySet
 
 class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
     companion object {
-        const val TAG = "SuperYAMF_HookLauncher"
+        const val TAG = "reYAMF_HookLauncher"
         const val ACTION_RECEIVE_LAUNCHER_CONFIG =
             "com.mja.reyamf.ACTION_RECEIVE_LAUNCHER_CONFIG"
 
@@ -71,8 +71,14 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun handleLoadPackage(lpparam: XC_LoadPackage.LoadPackageParam) {
         EzXHelperInit.initHandleLoadPackage(lpparam)
-        loadClassOrNull("com.android.quickstep.RecentsActivity") ?: return
-        findMethod("com.android.quickstep.RecentsActivity") {
+        //TODO: The cleaner solution would be checking the default launcher and hooking only one class based on that
+        val possibleHooks = listOf("com.android.quickstep.RecentsActivity", "com.android.launcher3.Launcher")
+        for (className in possibleHooks) attemptHooks(lpparam, className)
+    }
+
+    private fun attemptHooks(lpparam: XC_LoadPackage.LoadPackageParam, clzName: String) {
+        loadClassOrNull(clzName) ?: return
+        findMethod(clzName) {
             name == "onCreate"
         }.hookAfter {
             if (!isRegistered) {
@@ -86,17 +92,26 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
                         intent.getBooleanExtra(EXTRA_HOOK_TRANSIENT_TASKBAR, false)
                     log(
                         TAG,
-                        "receive config hookRecent=$hookRecent hookTaskbar=$hookTaskbar hookPopup=$hookPopup hookTranslucentTaskbar=$hookTransientTaskbar"
+                        "received config hookRecent=$hookRecent hookTaskbar=$hookTaskbar hookPopup=$hookPopup hookTranslucentTaskbar=$hookTransientTaskbar"
                     )
 
-                    if (hookRecent) runCatching { hookRecent(lpparam) }.onFailure { e ->
-                        log(TAG, "hook recent failed", e) }
-                    if (hookTaskbar) runCatching { hookTaskbar(lpparam) }.onFailure { e ->
-                        log(TAG, "hook taskbar failed", e) }
-                    if (hookPopup) runCatching { hookPopup(lpparam) }.onFailure { e ->
-                        log(TAG, "hook popup failed", e) }
-                    if (hookTransientTaskbar) runCatching { hookTransientTaskbar(lpparam) }.onFailure { e ->
-                        log(TAG, "hook transient failed", e) }
+                    if (hookRecent) runCatching {
+                        hookRecent(lpparam)
+                        log(TAG, "hooked recent $clzName")
+                    }.onFailure { e ->
+                        log(TAG, "cannot hook recent $clzName", e) }
+                    if (hookTaskbar) runCatching {
+                        hookTaskbar(lpparam)
+                        log(TAG, "hooked taskbar $clzName")
+                    }.onFailure { e -> log(TAG, "cannot hook taskbar $clzName", e) }
+                    if (hookPopup) runCatching {
+                        hookPopup(lpparam)
+                        log(TAG, "hooked popup $clzName")
+                    }.onFailure { e -> log(TAG, "cannot hook popup for $clzName", e) }
+                    if (hookTransientTaskbar) runCatching {
+                        hookTransientTaskbar(lpparam)
+                        log(TAG, "hooked transient $clzName")
+                    }.onFailure { e -> log(TAG, "cannot hook transient $clzName", e) }
                     application.unregisterReceiver(this)
                 }
                 application.sendBroadcast(Intent(YAMFManager.ACTION_GET_LAUNCHER_CONFIG).apply {
@@ -110,10 +125,6 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
     }
 
     private fun hookRecent(lpparam: XC_LoadPackage.LoadPackageParam) {
-        log(TAG, "hooking recent ${lpparam.packageName}")
-        if (lpparam.packageName != "com.android.launcher3")
-            log(TAG, "recent IS NOT hooking launcher3!")
-
         XposedBridge.hookAllMethods(
             XposedHelpers.findClass(
                 "com.android.quickstep.TaskOverlayFactory",
@@ -205,7 +216,6 @@ class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
                 }
             })
     }
-
     private fun hookTaskbar(lpparam: XC_LoadPackage.LoadPackageParam) {
         loadClass("com.android.launcher3.taskbar.TaskbarActivityContext").apply {
             findMethodOrNull { name == "startItemInfoActivity" }
