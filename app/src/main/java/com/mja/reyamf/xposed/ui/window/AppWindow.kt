@@ -104,13 +104,13 @@ class AppWindow(
         ITaskStackListenerProxy.newInstance(context.classLoader) { args, method ->
             when (method.name) {
                 "onTaskMovedToFront" -> {
-                    onTaskMovedToFront(args[0] as ActivityManager.RunningTaskInfo)
+                    onTaskForeground(args[0] as ActivityManager.RunningTaskInfo)
                 }
                 "onTaskDescriptionChanged" -> {
                     onTaskDescriptionChanged(args[0] as ActivityManager.RunningTaskInfo)
                 }
                 "onTaskRemovalStarted" -> {
-                    onDestroy()
+                    onTaskRemovalStarted(args[0] as ActivityManager.RunningTaskInfo)
                 }
             }
         }
@@ -118,6 +118,12 @@ class AppWindow(
     private val surfaceOnTouchListener = SurfaceOnTouchListener()
     private val surfaceOnGenericMotionListener = SurfaceOnGenericMotionListener()
     var displayId = -1
+    // Package (and user) this freeform window is showing. Tracked from tasks
+    // on our own virtual display. When the same app is opened fullscreen
+    // (e.g. from the launcher on the default display), the window closes itself
+    // to avoid a fullscreen/freeform duplicate.
+    private var windowPackageName: String? = null
+    private var windowUserId: Int? = null
     var rotateLock = false
     var isMini = false
     var isCollapsed = false
@@ -447,6 +453,7 @@ class AppWindow(
 
         (Instances.windowManager as WindowManagerHidden).setDisplayImePolicy(displayId, if (config.showImeInWindow) WindowManagerHidden.DISPLAY_IME_POLICY_LOCAL else WindowManagerHidden.DISPLAY_IME_POLICY_FALLBACK_DISPLAY)
         Instances.activityTaskManager.registerTaskStackListener(taskStackListener)
+        refreshOwnPackage()
         (surfaceView as? TextureView)?.surfaceTextureListener = this
         (surfaceView as? SurfaceView)?.holder?.addCallback(this)
         var failCount = 0
@@ -661,8 +668,76 @@ class AppWindow(
     }
 
     fun onTaskMovedToFront(taskInfo: ActivityManager.RunningTaskInfo) {
-        if (taskInfo.getObject("displayId") == displayId) {
+        onTaskForeground(taskInfo)
+    }
+
+    fun onTaskForeground(taskInfo: ActivityManager.RunningTaskInfo) {
+        val taskDisplayId = getTaskDisplayId(taskInfo) ?: return
+        if (taskDisplayId == displayId) {
+            trackOwnTask(taskInfo)
             updateTask(taskInfo)
+            return
+        }
+        if (taskDisplayId != Display.DEFAULT_DISPLAY) {
+            return
+        }
+        closeIfFullscreenDuplicate(taskInfo)
+    }
+
+    private fun getTaskDisplayId(taskInfo: ActivityManager.RunningTaskInfo): Int? {
+        return runCatching { taskInfo.getObject("displayId") as? Int }.getOrNull()
+    }
+
+    private fun getTaskPackage(taskInfo: ActivityManager.RunningTaskInfo): String? {
+        return taskInfo.baseActivity?.packageName
+            ?: taskInfo.topActivity?.packageName
+    }
+
+    private fun getTaskUserId(taskInfo: ActivityManager.RunningTaskInfo): Int? {
+        runCatching { taskInfo.getObjectAs<Int>("userId") }.getOrNull()?.let { return it }
+        return runCatching { taskInfo.getObject("userId") as? Int }.getOrNull()
+    }
+
+    private fun trackOwnTask(taskInfo: ActivityManager.RunningTaskInfo) {
+        val pkg = getTaskPackage(taskInfo) ?: return
+        windowPackageName = pkg
+        getTaskUserId(taskInfo)?.let { windowUserId = it }
+    }
+
+    private fun refreshOwnPackage() {
+        if (windowPackageName != null) return
+        runCatching {
+            getTopRootTask()?.let { task ->
+                task.baseActivity?.packageName?.let { pkg ->
+                    windowPackageName = pkg
+                    runCatching { task.getObject("userId") as? Int }.getOrNull()?.let { windowUserId = it }
+                }
+            }
+        }
+    }
+
+    private fun closeIfFullscreenDuplicate(fullscreenTask: ActivityManager.RunningTaskInfo) {
+        if (isDestroyed) return
+        refreshOwnPackage()
+        val ownPkg = windowPackageName ?: return
+        val fullscreenPkg = getTaskPackage(fullscreenTask) ?: return
+        if (fullscreenPkg != ownPkg) return
+        val ownUser = windowUserId
+        val fullscreenUser = getTaskUserId(fullscreenTask)
+        if (ownUser != null && fullscreenUser != null && ownUser != fullscreenUser) return
+        Log.d(TAG, "close freeform display=$displayId, same app opened fullscreen: $fullscreenPkg")
+        runMain {
+            runCatching {
+                if (!isDestroyed && ::binding.isInitialized) {
+                    binding.ibClose.callOnClick()
+                }
+            }
+        }
+    }
+
+    fun onTaskRemovalStarted(taskInfo: ActivityManager.RunningTaskInfo) {
+        if (getTaskDisplayId(taskInfo) == displayId) {
+            onDestroy()
         }
     }
 
