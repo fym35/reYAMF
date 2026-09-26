@@ -147,8 +147,14 @@ object YAMFManager : IYAMFManager.Stub() {
             CommonContextWrapper.createAppCompatContext(systemUiContext.createContext()),
             config.flags
         ) { displayId ->
-            addWindow(displayId)
-            startCmd?.startAuto(displayId)
+            if (startCmd == null) {
+                addWindow(displayId)
+                true
+            } else {
+                val ok = startCmd.startAuto(displayId)
+                if (ok) addWindow(displayId)
+                ok
+            }
         }
     }
 

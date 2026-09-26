@@ -48,7 +48,6 @@ import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 import java.lang.reflect.Proxy
 import kotlin.apply
-import java.util.concurrent.CopyOnWriteArraySet
 
 class HookLauncher : IXposedHookLoadPackage, IXposedHookZygoteInit {
     companion object {

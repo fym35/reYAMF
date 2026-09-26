@@ -88,7 +88,7 @@ import androidx.core.graphics.drawable.toDrawable
 class AppWindow(
     val context: Context,
     private val flags: Int,
-    private val onVirtualDisplayCreated: (Int) -> Unit
+    private val onVirtualDisplayCreated: (Int) -> Boolean
 ) :
     TextureView.SurfaceTextureListener, SurfaceHolder.Callback {
     companion object {
@@ -237,6 +237,17 @@ class AppWindow(
             PixelFormat.TRANSLUCENT
         )
         paramsBg.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+
+        // Create the virtual display first so the launch can be attempted before
+        // any window views are added. If the launch fails, abort without opening.
+        virtualDisplay = Instances.displayManager.createVirtualDisplay(
+            "yamf${System.currentTimeMillis()}", config.defaultWindowWidth, config.defaultWindowHeight, newDpi-config.reduceDPI, null, flags
+        )
+        displayId = virtualDisplay.display.displayId
+        if (!onVirtualDisplayCreated(displayId)) {
+            runCatching { virtualDisplay.release() }
+            return
+        }
 
         bindingLeftBackGesture.root.let {
             paramsBg.gravity = Gravity.START or Gravity.TOP
@@ -434,10 +445,6 @@ class AppWindow(
             animateAlpha(binding.clSuperLayout, 1f, 0f)
         }
 
-        virtualDisplay = Instances.displayManager.createVirtualDisplay(
-            "yamf${System.currentTimeMillis()}", config.defaultWindowWidth, config.defaultWindowHeight, newDpi-config.reduceDPI, null, flags
-        )
-        displayId = virtualDisplay.display.displayId
         (Instances.windowManager as WindowManagerHidden).setDisplayImePolicy(displayId, if (config.showImeInWindow) WindowManagerHidden.DISPLAY_IME_POLICY_LOCAL else WindowManagerHidden.DISPLAY_IME_POLICY_FALLBACK_DISPLAY)
         Instances.activityTaskManager.registerTaskStackListener(taskStackListener)
         (surfaceView as? TextureView)?.surfaceTextureListener = this
@@ -464,7 +471,6 @@ class AppWindow(
             this.width = width
             this.height = height
         }
-        onVirtualDisplayCreated(displayId)
 
         isResize = false
         binding.cvBackground.post {

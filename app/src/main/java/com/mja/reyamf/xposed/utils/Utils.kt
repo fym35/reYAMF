@@ -94,56 +94,60 @@ fun startActivity(context: Context, componentName: ComponentName, userId: Int, d
     )
 }
 
-fun moveToDisplay(context: Context, taskId: Int, componentName: ComponentName, userId: Int, displayId: Int) {
+fun moveToDisplay(context: Context, taskId: Int, componentName: ComponentName, userId: Int, displayId: Int): Boolean {
     when (YAMFManager.config.windowfy) {
         0 -> {
-            runCatching {
+            return runCatching {
                 moveTask(taskId, displayId)
             }.onException {
                 TipUtil.showToast("Unable to move task $taskId")
-            }
+            }.isSuccess
         }
         1 -> {
-            runCatching {
+            return runCatching {
                 startActivity(context, componentName, userId, displayId)
             }.onException {
                 TipUtil.showToast("Unable to start activity $componentName")
-            }
+            }.isSuccess
         }
         2 -> {
-            runCatching {
+            val moveResult = runCatching {
                 moveTask(taskId, displayId)
-            }.onException {
-                TipUtil.showToast("Unable to move task $taskId")
-                runCatching {
-                    startActivity(context, componentName, userId, displayId)
-                }.onException {
-                    TipUtil.showToast("Unable to start activity $componentName")
-                }
             }
+            if (moveResult.isSuccess) return true
+            moveResult.onException {
+                TipUtil.showToast("Unable to move task $taskId")
+            }
+            return runCatching {
+                startActivity(context, componentName, userId, displayId)
+            }.onException {
+                TipUtil.showToast("Unable to start activity $componentName")
+            }.isSuccess
         }
     }
+    return false
 }
 
-fun StartCmd.startAuto(displayId: Int) {
+fun StartCmd.startAuto(displayId: Int): Boolean {
     when {
         canStartActivity && canMoveTask ->
-            moveToDisplay(Instances.systemContext, taskId!!, componentName!!, userId!!, displayId)
+            return moveToDisplay(Instances.systemContext, taskId!!, componentName!!, userId!!, displayId)
         canMoveTask -> {
-            runCatching {
+            return runCatching {
                 moveTask(taskId!!, displayId)
             }.onException {
                 TipUtil.showToast("can't move task $taskId")
-            }
+            }.isSuccess
         }
         canStartActivity -> {
-            runCatching {
+            return runCatching {
                 startActivity(Instances.systemContext, componentName!!, userId!!, displayId)
             }.onException {
                 TipUtil.showToast("can't start activity $componentName")
-            }
+            }.isSuccess
         }
     }
+    return true
 }
 
 fun getTopRootTask(displayId: Int): ActivityTaskManager.RootTaskInfo? {
